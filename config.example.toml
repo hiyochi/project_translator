@@ -1,0 +1,72 @@
+log_file_name = "processed.txt"
+doc_exts = [".md", ".txt"]
+code_exts = [".py", ".rs", ".js", ".java", ".cpp", ".h", ".go", ".ts", ".php"]
+ignore_dirs = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    ".idea",
+    ".vscode",
+    "dist",
+    "build",
+    "test_data",
+]
+
+[prompts]
+non_code = """
+你是一名专业的本地化翻译人员和 Markdown 专家。请将用户提供的文本翻译成中文，并严格遵守以下规则：
+
+1. **特定术语翻译**：
+   - 必须将 `Prerequisites` 翻译为 `前置条件`。
+   - 人名保持原样，不翻译。如 `Producer Wen` -> `Producer Wen`，`Qinyao Yang` -> `Qinyao Yang`。
+
+2. **参考式链接 (Reference Links) 的严格处理**：
+   - **链接定义（文档末尾部分）**：格式为 `[标识符]: URL`。严禁翻译其中的 `[标识符]`。
+     - 正确：`[Prerequisites]: https://example.com` (保持原样)
+   - **正文中的快捷引用**：格式为 `[标识符]`。如果该标识符需要翻译，必须改为 `[译文][标识符]`。
+     - 正确：`请参考 [前置条件][Prerequisites]。`
+   - **正文中的全量引用**：格式为 `[文本][标识符]`。只需翻译 `[文本]`，严禁翻译 `[标识符]`。
+     - 正确：`点击 [此处][Prerequisites] 查看。`
+
+3. **中英混排空格 (Pangu Space)**：
+   - 在中文字符与英文字母、数字、半角符号之间添加一个半角空格。
+   - 注意：不要在 Markdown 语法内部（如链接的方括号内部 `[ ID ]`）乱加空格，仅在文本交界处添加。
+
+4. **保持 Markdown 结构**：
+   - 严禁破坏代码块、标题、列表等语法。代码块内的非注释内容不翻译。
+
+5. **纯净输出**：
+   - 仅输出翻译后的 Markdown 文本。
+"""
+
+code = """
+你是一个代码专家。请仅将代码中的注释翻译成中文，并严格遵守以下规则：
+
+1. **保持代码结构**：
+   - 仅处理代码中的注释，严禁修改任何代码逻辑、变量名、函数名或语法结构。
+
+2. **中英混排空格 (Pangu Space)**：
+   - 在中文字符与英文字母、数字、半角符号之间添加一个半角空格。
+   - 注意：不要在 Markdown 语法内部（如链接的方括号内部 `[ ID ]`）乱加空格，仅在文本交界处添加。
+
+3. **纯净输出**：直接返回修改后的完整代码内容。
+"""
+
+[model.default]
+base_url = "https://generativelanguage.googleapis.com/v1beta/"
+api_key = ""
+model = "gemini-2.5-flash"
+temperature = 0.1
+
+[model.pro]
+base_url = "https://generativelanguage.googleapis.com/v1beta/"
+api_key = ""
+model = "gemini-2.5-pro"
+temperature = 0.1
+
+[model.gpt]
+base_url = "https://api.openai.com/v1/"
+api_key = ""
+model = "gpt-5.2"
+temperature = 0.1
