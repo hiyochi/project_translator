@@ -30,7 +30,7 @@ class ProjectTranslator:
 
     def _signal_handler(self, sig, frame):
         """拦截 Ctrl+C 并优雅退出"""
-        print("\n\n🛑 接收到中断信号，等待当前文件处理完毕后停止...")
+        print("\n\n🛑 接收到中断信号，等待当前文件保存完毕后安全停止...")
         self.is_exiting = True
 
     def _load_config(self, profile_name: str) -> Dict[str, Any]:
@@ -50,7 +50,7 @@ class ProjectTranslator:
     def _get_translate_prompt(
         self, content: str, is_code: bool
     ) -> List[Dict[str, str]]:
-        """生成 Prompt (消除重复代码)"""
+        """生成 Prompt"""
         prompt_type = "code" if is_code else "non_code"
         return [
             {"role": "system", "content": self.config["prompts"][prompt_type]},
@@ -66,7 +66,6 @@ class ProjectTranslator:
             if not source_text.strip():
                 return True
 
-            # 重试机制
             translated_text = None
             for attempt in range(max_retries):
                 if self.is_exiting:
@@ -76,18 +75,18 @@ class ProjectTranslator:
                         model=self.model_config["model"],
                         messages=self._get_translate_prompt(source_text, is_code),
                         temperature=self.model_config.get("temperature", 0.3),
-                        timeout=60.0,  # 设置超时，防止死等
+                        timeout=60.0,
                     )
                     translated_text = response.choices[0].message.content
-                    break  # 成功则跳出重试循环
+                    break
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        time.sleep(2)  # 失败后稍作等待
+                        time.sleep(2)
                     else:
-                        raise e  # 抛出最后一次异常
+                        raise e
 
             if translated_text:
-                # 【关键优化】原子写入：先写入临时文件，再替换原文件，防止强退导致文件损坏
+                # 原子写入：先写入临时文件，再替换，防止强退导致损坏
                 temp_file = file_path.with_suffix(".tmp.trans")
                 temp_file.write_text(translated_text, encoding="utf-8")
                 temp_file.replace(file_path)
@@ -107,6 +106,7 @@ class ProjectTranslator:
             print(f"❌ 错误：路径 '{self.root_path}' 不存在")
             return
 
+        # 1. 读取断点记录
         processed_files = set()
         if self.status_file.exists():
             processed_files = {
@@ -115,47 +115,74 @@ class ProjectTranslator:
                 if line.strip()
             }
 
-        print(f"🚀 开始处理: {self.root_path}")
-        print(f"📌 已跳过 {len(processed_files)} 个记录\n")
+        print(f"🔍 正在扫描目录: {self.root_path} ...")
 
-        # 以追加模式打开日志文件，保持句柄打开，提高性能
+        # 2. 预扫描并过滤文件
+        files_to_process = []
+        for file_path in self.root_path.rglob("*"):
+            if (
+                not file_path.is_file()
+                or file_path.name == self.config["log_file_name"]
+            ):
+                continue
+
+            rel_path = str(file_path.relative_to(self.root_path))
+            rel_parts = Path(rel_path).parts
+
+            # 过滤忽略的目录或隐藏目录
+            if any(
+                part in self.config.get("ignore_dirs", []) or part.startswith(".")
+                for part in rel_parts
+            ):
+                continue
+
+            # 过滤已处理过的文件
+            if rel_path in processed_files:
+                continue
+
+            # 判断文件类型
+            ext = file_path.suffix.lower()
+            is_doc = ext in self.config.get("doc_exts", [])
+            is_code = ext in self.config.get("code_exts", [])
+
+            if is_doc or is_code:
+                # 把符合条件的文件加入待处理队列
+                files_to_process.append((file_path, rel_path, is_code))
+
+        total_files = len(files_to_process)
+
+        # 3. 打印统计信息
+        print(f"📌 扫描完毕！已跳过 {len(processed_files)} 个历史完成项。")
+        if total_files == 0:
+            print("🎉 当前目录下所有支持的文件均已翻译完毕！")
+            return
+
+        print(f"🚀 开始翻译，共有 {total_files} 个文件需要处理。\n")
+
+        # 为了让如 [ 1/15] [10/15] 对齐更美观，计算总数的位数
+        pad_len = len(str(total_files))
+
+        # 4. 遍历处理队列
         with open(self.status_file, "a", encoding="utf-8") as status_f:
-            for file_path in self.root_path.rglob("*"):
+            for i, (file_path, rel_path, is_code) in enumerate(files_to_process, 1):
                 if self.is_exiting:
                     print("\n🛑 运行已安全中止。")
                     break
 
-                if (
-                    not file_path.is_file()
-                    or file_path.name == self.config["log_file_name"]
-                ):
-                    continue
+                # 打印进度，例如：[ 1/10] 📝 正在翻译: xxx ...
+                progress_prefix = f"[{i:>{pad_len}}/{total_files}]"
+                print(
+                    f"{progress_prefix} 📝 正在翻译: {rel_path} ... ",
+                    end="",
+                    flush=True,
+                )
 
-                # 【优化】只检查相对路径的 parts，避免被父级目录的命名误导
-                rel_path = str(file_path.relative_to(self.root_path))
-                rel_parts = Path(rel_path).parts
-                if any(
-                    part in self.config["ignore_dirs"] or part.startswith(".")
-                    for part in rel_parts
-                ):
-                    continue
-
-                if rel_path in processed_files:
-                    continue
-
-                ext = file_path.suffix.lower()
-                is_doc = ext in self.config.get("doc_exts", [])
-                is_code = ext in self.config.get("code_exts", [])
-
-                if is_doc or is_code:
-                    print(f"📝 正在翻译: {rel_path} ... ", end="", flush=True)
-
-                    if self._process_file(file_path, is_code):
-                        status_f.write(f"{rel_path}\n")
-                        status_f.flush()  # 确保立刻写入硬盘
-                        print("✅")
-                    else:
-                        print("⏩ (跳过或失败)")
+                if self._process_file(file_path, is_code):
+                    status_f.write(f"{rel_path}\n")
+                    status_f.flush()
+                    print("✅")
+                else:
+                    print("⏩ (跳过或失败)")
 
 
 def main():
